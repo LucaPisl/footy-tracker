@@ -1,0 +1,8 @@
+# YOLO detector settings (player class)
+yolo:
+  model_path: "weights/yolo/player.pt"
+  device: "cpu"
+  conf_threshold: 0.25
+  iou_threshold: 0.45
+  class_ids: [0]
+  img_size: 640

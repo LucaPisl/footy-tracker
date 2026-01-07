@@ -1,0 +1,8 @@
+# Tracker settings (DeepSORT default)
+tracker:
+  type: "deepsort"
+  max_age: 30
+  n_init: 3
+  max_iou_distance: 0.7
+  max_cosine_distance: 0.2
+  nn_budget: 100

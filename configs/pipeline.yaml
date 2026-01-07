@@ -1,0 +1,33 @@
+# End-to-end pipeline wiring.
+paths:
+  input_video: "data/videos/sample.mp4"
+  output_dir: "outputs/demos"
+  output_name: "demo_overlay.mp4"
+  log_dir: "outputs/logs"
+
+configs:
+  yolo: "configs/yolo.yaml"
+  tracker: "configs/tracker.yaml"
+  jersey: "configs/jersey.yaml"
+  # Optional local override file (ignored if missing)
+  paths_local: "configs/paths_local.yaml"
+
+video:
+  preserve_fps: true
+  output_fps: null
+  resize:
+    width: null
+    height: null
+
+overlay:
+  show_boxes: true
+  show_track_ids: true
+  show_jersey: true
+  show_confidence: true
+  line_thickness: 2
+  font_scale: 0.6
+  font_thickness: 1
+  unknown_label: "unknown"
+
+logging:
+  summary_every_n_frames: 1

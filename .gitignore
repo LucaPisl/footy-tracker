@@ -1,0 +1,44 @@
+# venv
+.venv/
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# notebooks
+.ipynb_checkpoints/
+
+# local-only data/artifacts (keep README files tracked)
+data/*
+!data/README.md
+
+# model weights (keep README tracked)
+weights/*
+!weights/README.md
+
+# deprecated model path (keep README tracked)
+models/*
+!models/README.md
+
+outputs/*
+!outputs/.gitkeep
+
+# Ultralytics / training outputs
+runs/
+
+# local environment
+.env
+
+# local overrides
+configs/paths_local.yaml
+
+# OS / editor
+.vscode/
+.DS_Store
+Thumbs.db

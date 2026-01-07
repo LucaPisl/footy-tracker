@@ -1,0 +1,1 @@
+"""Footy Tracker package."""

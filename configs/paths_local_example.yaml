@@ -1,0 +1,8 @@
+# Copy to configs/paths_local.yaml and edit values for your machine.
+paths:
+  input_video: "data/videos/sample.mp4"
+  output_dir: "outputs/demos"
+  output_name: "demo_overlay.mp4"
+  yolo_weights: "weights/yolo/player.pt"
+  jersey_weights: "weights/jersey/jersey.pt"
+  log_dir: "outputs/logs"
