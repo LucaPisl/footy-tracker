@@ -42,3 +42,14 @@ configs/paths_local.yaml
 .vscode/
 .DS_Store
 Thumbs.db
+/.output.txt
+/download.log
+/download_jersey.log
+/.idea/encodings.xml
+/.idea/footy-tracker.iml
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/inspectionProfiles/profiles_settings.xml
+/.idea/vcs.xml
+/wget-log
+/wget-log.1
