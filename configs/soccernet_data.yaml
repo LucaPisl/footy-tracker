@@ -1,0 +1,9 @@
+path: data/yolo_soccernet
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: player
+  1: referee
+  2: ball
