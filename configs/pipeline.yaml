@@ -1,6 +1,10 @@
 # End-to-end pipeline wiring.
 paths:
   input_video: "data/videos/sample.mp4"
+  # Extracted frames for the ML step.
+  frames_dir: "outputs/frames/input"
+  # TODO(partner-ml): write annotated PNGs here for stitching.
+  ml_output_dir: "outputs/frames/overlay"
   output_dir: "outputs/demos"
   output_name: "demo_overlay.mp4"
   log_dir: "outputs/logs"
@@ -12,6 +16,17 @@ configs:
   # Optional local override file (ignored if missing)
   paths_local: "configs/paths_local.yaml"
 
+steps:
+  extract_frames: true
+  stitch_video: true
+  # Fail fast if ML outputs are missing.
+  require_ml_outputs: true
+
+frames:
+  pattern: "frame_{index:06d}.png"
+  output_glob: "*.png"
+  start_index: 0
+
 video:
   preserve_fps: true
   output_fps: null
@@ -19,6 +34,7 @@ video:
     width: null
     height: null
 
+# Overlay settings are reserved for the ML step that draws boxes/labels.
 overlay:
   show_boxes: true
   show_track_ids: true

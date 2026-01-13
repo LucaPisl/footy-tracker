@@ -47,6 +47,23 @@ the ball.
   player, referee, and ball.
 * **Codebase**: The `src/footy_tracker/` package is initialized.
 
+### Demo Pipeline (Frame IO + Stitching)
+
+The demo pipeline currently handles **frame extraction** and **video stitching**. The ML tracking/overlay step is
+handled by the GPU contributor and should write annotated PNGs that this pipeline stitches back into an MP4.
+
+1. Set paths in `configs/pipeline.yaml`:
+   * `paths.input_video` -> input MP4
+   * `paths.frames_dir` -> extracted PNGs (input for ML step)
+   * `paths.ml_output_dir` -> annotated PNGs produced by the ML step
+2. Run the pipeline:
+
+```bash
+python -m footy_tracker --config configs/pipeline.yaml
+```
+
+If you need to run only extraction or only stitching, update the `steps` section in `configs/pipeline.yaml`.
+
 ### Remaining Tasks
 
 *   [x] **Player Detection Training**: Fine-tune YOLO on SoccerNet-Tracking.
