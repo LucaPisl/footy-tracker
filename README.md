@@ -64,6 +64,22 @@ python -m footy_tracker --config configs/pipeline.yaml
 
 If you need to run only extraction or only stitching, update the `steps` section in `configs/pipeline.yaml`.
 
+### Jersey Number Training (sn-jersey)
+
+1. Extract the dataset (if you only have the zips):
+   * `data/sn_jersey/jersey-2023/train.zip` -> `data/sn_jersey/jersey-2023/train/`
+2. Train the classifier:
+
+```bash
+python scripts/train_jersey.py --config configs/jersey_train.yaml
+```
+
+Outputs:
+* `outputs/train/jersey/best.pt` (best checkpoint)
+* `outputs/train/jersey/label_mapping.json` (class index ↔ label)
+
+Copy the trained weights into `weights/jersey/jersey.pt` for inference.
+
 ### Remaining Tasks
 
 *   [x] **Player Detection Training**: Fine-tune YOLO on SoccerNet-Tracking.

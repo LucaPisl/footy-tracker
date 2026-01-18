@@ -1,0 +1,31 @@
+# Jersey number classifier training config.
+data:
+  root: "data/sn_jersey/jersey-2023"
+  train_split: "train"
+  auto_extract: true
+  include_unknown: false
+  unknown_label: "unknown"
+  val_ratio: 0.1
+  max_frames_per_track: 30
+  seed: 1337
+
+model:
+  arch: "resnet18"
+  pretrained: false
+  image_size: 128
+
+train:
+  epochs: 20
+  batch_size: 64
+  lr: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  device: "auto"
+  use_class_weights: true
+  output_dir: "outputs/train/jersey"
+  checkpoint_every: 1
+  resume:
+    enabled: false
+    checkpoint_path: "outputs/train/jersey/checkpoint_last.pt"
+  scheduler:
+    name: "cosine"
