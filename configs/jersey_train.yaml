@@ -10,20 +10,32 @@ data:
   seed: 1337
 
 model:
-  arch: "resnet18"
-  pretrained: false
-  image_size: 128
+  arch: "resnet34"
+  pretrained: true
+  image_size: 192
+
+augment:
+  scale_min: 0.85
+  scale_max: 1.0
+  color_jitter: 0.3
+  random_erasing_prob: 0.1
 
 train:
-  epochs: 20
-  batch_size: 64
-  lr: 0.001
+  epochs: 80
+  batch_size: 128
+  lr: 0.0003
   weight_decay: 0.0001
-  num_workers: 0
+  num_workers: 4
   device: "auto"
   use_class_weights: true
   output_dir: "outputs/train/jersey"
   checkpoint_every: 1
+  label_smoothing: 0.05
+  mixup_cutmix:
+    mixup_prob: 0.2
+    mixup_alpha: 0.4
+    cutmix_prob: 0.2
+    cutmix_alpha: 0.6
   resume:
     enabled: false
     checkpoint_path: "outputs/train/jersey/checkpoint_last.pt"

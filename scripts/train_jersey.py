@@ -71,17 +71,31 @@ def ensure_split_dir(root: Path, split: str, auto_extract: bool) -> Path:
     )
 
 
-def build_transforms(image_size: int, augment: bool) -> transforms.Compose:
+def build_transforms(image_size: int, augment: bool, augment_cfg: dict) -> transforms.Compose:
     mean = (0.485, 0.456, 0.406)
     std = (0.229, 0.224, 0.225)
     if augment:
+        scale_min = float(augment_cfg.get("scale_min", 0.85))
+        scale_max = float(augment_cfg.get("scale_max", 1.0))
+        erasing_prob = float(augment_cfg.get("random_erasing_prob", 0.0))
+        jitter = float(augment_cfg.get("color_jitter", 0.2))
         return transforms.Compose(
             [
-                transforms.Resize((image_size, image_size)),
-                transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+                transforms.RandomResizedCrop(
+                    size=(image_size, image_size),
+                    scale=(scale_min, scale_max),
+                    ratio=(0.9, 1.1),
+                ),
+                transforms.ColorJitter(
+                    brightness=jitter,
+                    contrast=jitter,
+                    saturation=jitter,
+                    hue=min(0.05, jitter / 4),
+                ),
                 transforms.RandomAffine(degrees=6, translate=(0.05, 0.05), scale=(0.9, 1.1)),
                 transforms.ToTensor(),
                 transforms.Normalize(mean, std),
+                transforms.RandomErasing(p=erasing_prob, scale=(0.02, 0.2), ratio=(0.3, 3.3)),
             ]
         )
     return transforms.Compose(
@@ -124,12 +138,55 @@ def accuracy(logits: torch.Tensor, targets: torch.Tensor) -> float:
     return correct / max(1, targets.numel())
 
 
+def _rand_bbox(width: int, height: int, lam: float) -> tuple[int, int, int, int]:
+    cut_ratio = (1.0 - lam) ** 0.5
+    cut_w = int(width * cut_ratio)
+    cut_h = int(height * cut_ratio)
+    cx = random.randint(0, width - 1)
+    cy = random.randint(0, height - 1)
+    x1 = max(cx - cut_w // 2, 0)
+    y1 = max(cy - cut_h // 2, 0)
+    x2 = min(cx + cut_w // 2, width)
+    y2 = min(cy + cut_h // 2, height)
+    return x1, y1, x2, y2
+
+
+def _apply_mixup(
+    images: torch.Tensor,
+    labels: torch.Tensor,
+    alpha: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
+    if alpha <= 0:
+        return images, labels, labels, 1.0
+    lam = torch.distributions.Beta(alpha, alpha).sample().item()
+    index = torch.randperm(images.size(0), device=images.device)
+    mixed = lam * images + (1 - lam) * images[index]
+    return mixed, labels, labels[index], lam
+
+
+def _apply_cutmix(
+    images: torch.Tensor,
+    labels: torch.Tensor,
+    alpha: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
+    if alpha <= 0:
+        return images, labels, labels, 1.0
+    lam = torch.distributions.Beta(alpha, alpha).sample().item()
+    index = torch.randperm(images.size(0), device=images.device)
+    _, _, height, width = images.size()
+    x1, y1, x2, y2 = _rand_bbox(width, height, lam)
+    images[:, :, y1:y2, x1:x2] = images[index, :, y1:y2, x1:x2]
+    lam_adjusted = 1.0 - ((x2 - x1) * (y2 - y1) / (width * height))
+    return images, labels, labels[index], lam_adjusted
+
+
 def run_epoch(
     model: nn.Module,
     loader: DataLoader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer | None,
     device: torch.device,
+    mix_cfg: dict,
 ) -> tuple[float, float]:
     is_train = optimizer is not None
     model.train(is_train)
@@ -143,8 +200,30 @@ def run_epoch(
 
         if is_train:
             optimizer.zero_grad()
+        mixed_labels = None
+        mix_lam = 1.0
+        if is_train:
+            mixup_prob = float(mix_cfg.get("mixup_prob", 0.0))
+            cutmix_prob = float(mix_cfg.get("cutmix_prob", 0.0))
+            mixup_alpha = float(mix_cfg.get("mixup_alpha", 0.0))
+            cutmix_alpha = float(mix_cfg.get("cutmix_alpha", 0.0))
+            mix_choice = random.random()
+            if cutmix_prob > 0 and mix_choice < cutmix_prob:
+                images, labels, mixed_labels, mix_lam = _apply_cutmix(
+                    images, labels, cutmix_alpha
+                )
+            elif mixup_prob > 0 and mix_choice < cutmix_prob + mixup_prob:
+                images, labels, mixed_labels, mix_lam = _apply_mixup(
+                    images, labels, mixup_alpha
+                )
+
         logits = model(images)
-        loss = criterion(logits, labels)
+        if mixed_labels is None:
+            loss = criterion(logits, labels)
+        else:
+            loss = mix_lam * criterion(logits, labels) + (1.0 - mix_lam) * criterion(
+                logits, mixed_labels
+            )
         if is_train:
             loss.backward()
             optimizer.step()
@@ -272,8 +351,9 @@ def main() -> None:
         val_samples = train_samples
 
     image_size = int(model_cfg.get("image_size", 128))
-    train_transform = build_transforms(image_size, augment=True)
-    val_transform = build_transforms(image_size, augment=False)
+    augment_cfg = config.get("augment", {}) or {}
+    train_transform = build_transforms(image_size, augment=True, augment_cfg=augment_cfg)
+    val_transform = build_transforms(image_size, augment=False, augment_cfg={})
 
     train_dataset = JerseyFrameDataset(train_samples, transform=train_transform)
     val_dataset = JerseyFrameDataset(val_samples, transform=val_transform)
@@ -308,11 +388,12 @@ def main() -> None:
     ).to(device)
 
     use_class_weights = bool(train_cfg.get("use_class_weights", True))
+    label_smoothing = float(train_cfg.get("label_smoothing", 0.0))
     if use_class_weights:
         weights = compute_class_weights(train_samples, len(label_to_index)).to(device)
-        criterion = nn.CrossEntropyLoss(weight=weights)
+        criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=label_smoothing)
     else:
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -358,9 +439,12 @@ def main() -> None:
     logger.info("device=%s model=%s", device, model_cfg.get("arch", "resnet18"))
 
     checkpoint_every = int(train_cfg.get("checkpoint_every", 1))
+    mix_cfg = train_cfg.get("mixup_cutmix", {}) or {}
     for epoch in range(start_epoch, epochs + 1):
-        train_loss, train_acc = run_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc = run_epoch(model, val_loader, criterion, None, device)
+        train_loss, train_acc = run_epoch(
+            model, train_loader, criterion, optimizer, device, mix_cfg
+        )
+        val_loss, val_acc = run_epoch(model, val_loader, criterion, None, device, {})
         if scheduler is not None:
             scheduler.step()
         history.append(
