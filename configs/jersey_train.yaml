@@ -12,30 +12,40 @@ data:
 model:
   arch: "resnet34"
   pretrained: true
-  image_size: 192
+  image_size: 224
 
 augment:
+  use_random_resized_crop: false
   scale_min: 0.85
   scale_max: 1.0
-  color_jitter: 0.3
-  random_erasing_prob: 0.1
+  color_jitter: 0.2
+  random_erasing_prob: 0.0
 
 train:
   epochs: 80
   batch_size: 128
   lr: 0.0003
-  weight_decay: 0.0001
+  weight_decay: 0.00005
   num_workers: 4
   device: "auto"
   use_class_weights: true
   output_dir: "outputs/train/jersey"
   checkpoint_every: 1
-  label_smoothing: 0.05
+  label_smoothing: 0.0
+  loss:
+    type: "cross_entropy"
+    focal_gamma: 2.0
   mixup_cutmix:
-    mixup_prob: 0.2
-    mixup_alpha: 0.4
-    cutmix_prob: 0.2
-    cutmix_alpha: 0.6
+    mixup_prob: 0.0
+    mixup_alpha: 0.0
+    cutmix_prob: 0.0
+    cutmix_alpha: 0.0
+  early_stopping:
+    enabled: true
+    patience: 10
+    min_delta: 0.002
+    metric: "val_acc"
+    mode: "max"
   resume:
     enabled: false
     checkpoint_path: "outputs/train/jersey/checkpoint_last.pt"

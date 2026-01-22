@@ -8,6 +8,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import yaml
 from torch.utils.data import DataLoader
 from torchvision import models, transforms
@@ -75,17 +76,22 @@ def build_transforms(image_size: int, augment: bool, augment_cfg: dict) -> trans
     mean = (0.485, 0.456, 0.406)
     std = (0.229, 0.224, 0.225)
     if augment:
+        use_random_crop = bool(augment_cfg.get("use_random_resized_crop", True))
         scale_min = float(augment_cfg.get("scale_min", 0.85))
         scale_max = float(augment_cfg.get("scale_max", 1.0))
         erasing_prob = float(augment_cfg.get("random_erasing_prob", 0.0))
         jitter = float(augment_cfg.get("color_jitter", 0.2))
+        if use_random_crop:
+            resize_transform = transforms.RandomResizedCrop(
+                size=(image_size, image_size),
+                scale=(scale_min, scale_max),
+                ratio=(0.9, 1.1),
+            )
+        else:
+            resize_transform = transforms.Resize((image_size, image_size))
         return transforms.Compose(
             [
-                transforms.RandomResizedCrop(
-                    size=(image_size, image_size),
-                    scale=(scale_min, scale_max),
-                    ratio=(0.9, 1.1),
-                ),
+                resize_transform,
                 transforms.ColorJitter(
                     brightness=jitter,
                     contrast=jitter,
@@ -119,6 +125,16 @@ def build_model(arch: str, num_classes: int, pretrained: bool) -> nn.Module:
         model = models.resnet34(weights=weights)
         model.fc = nn.Linear(model.fc.in_features, num_classes)
         return model
+    if arch == "resnet50":
+        weights = models.ResNet50_Weights.DEFAULT if pretrained else None
+        model = models.resnet50(weights=weights)
+        model.fc = nn.Linear(model.fc.in_features, num_classes)
+        return model
+    if arch == "efficientnet_b0":
+        weights = models.EfficientNet_B0_Weights.DEFAULT if pretrained else None
+        model = models.efficientnet_b0(weights=weights)
+        model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
+        return model
     if arch == "mobilenet_v3_small":
         weights = models.MobileNet_V3_Small_Weights.DEFAULT if pretrained else None
         model = models.mobilenet_v3_small(weights=weights)
@@ -136,6 +152,35 @@ def accuracy(logits: torch.Tensor, targets: torch.Tensor) -> float:
     preds = torch.argmax(logits, dim=1)
     correct = (preds == targets).sum().item()
     return correct / max(1, targets.numel())
+
+
+class FocalLoss(nn.Module):
+    def __init__(
+            self,
+            gamma: float = 2.0,
+            alpha: torch.Tensor | None = None,
+            reduction: str = "mean",
+    ) -> None:
+        super().__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+        self.reduction = reduction
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        log_probs = F.log_softmax(logits, dim=1)
+        probs = log_probs.exp()
+        log_pt = log_probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+        pt = probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+        if self.alpha is not None:
+            alpha_t = self.alpha.gather(0, targets)
+        else:
+            alpha_t = 1.0
+        loss = -alpha_t * (1 - pt).pow(self.gamma) * log_pt
+        if self.reduction == "sum":
+            return loss.sum()
+        if self.reduction == "none":
+            return loss
+        return loss.mean()
 
 
 def _rand_bbox(width: int, height: int, lam: float) -> tuple[int, int, int, int]:
@@ -389,11 +434,22 @@ def main() -> None:
 
     use_class_weights = bool(train_cfg.get("use_class_weights", True))
     label_smoothing = float(train_cfg.get("label_smoothing", 0.0))
+    loss_cfg = train_cfg.get("loss", {}) or {}
+    loss_type = str(loss_cfg.get("type", "cross_entropy")).lower()
+    weights = None
     if use_class_weights:
         weights = compute_class_weights(train_samples, len(label_to_index)).to(device)
-        criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=label_smoothing)
+    if loss_type == "focal":
+        if label_smoothing > 0:
+            logger.warning("label_smoothing ignored for focal loss.")
+        gamma = float(loss_cfg.get("focal_gamma", 2.0))
+        alpha = weights if weights is not None else None
+        criterion = FocalLoss(gamma=gamma, alpha=alpha)
     else:
-        criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+        if weights is not None:
+            criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=label_smoothing)
+        else:
+            criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -419,6 +475,17 @@ def main() -> None:
     best_acc = 0.0
     history: list[dict[str, float]] = []
     start_epoch = 1
+
+    early_cfg = train_cfg.get("early_stopping", {}) or {}
+    early_enabled = bool(early_cfg.get("enabled", False))
+    early_patience = int(early_cfg.get("patience", 10))
+    early_min_delta = float(early_cfg.get("min_delta", 0.0))
+    early_metric = str(early_cfg.get("metric", "val_acc"))
+    early_mode = str(early_cfg.get("mode", "max"))
+    if early_mode not in {"max", "min"}:
+        raise ValueError("early_stopping.mode must be 'max' or 'min'.")
+    best_metric = None
+    epochs_without_improve = 0
 
     resume_cfg = train_cfg.get("resume", {}) or {}
     resume_enabled = bool(resume_cfg.get("enabled", False))
@@ -479,6 +546,31 @@ def main() -> None:
                 best_acc,
                 history,
             )
+
+        if early_enabled:
+            current_metric = val_acc if early_metric == "val_acc" else val_loss
+            if best_metric is None:
+                best_metric = current_metric
+                epochs_without_improve = 0
+            else:
+                improved = (
+                    current_metric >= best_metric + early_min_delta
+                    if early_mode == "max"
+                    else current_metric <= best_metric - early_min_delta
+                )
+                if improved:
+                    best_metric = current_metric
+                    epochs_without_improve = 0
+                else:
+                    epochs_without_improve += 1
+                    if epochs_without_improve >= early_patience:
+                        logger.info(
+                            "early_stop epoch=%d metric=%s value=%.4f",
+                            epoch,
+                            early_metric,
+                            current_metric,
+                        )
+                        break
 
     torch.save(model.state_dict(), output_dir / "last.pt")
     save_checkpoint(output_dir, epochs, model, optimizer, scheduler, best_acc, history)
